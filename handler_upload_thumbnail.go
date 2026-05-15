@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
@@ -44,19 +45,10 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	}
 	defer file.Close()
 	mediaType := f_header.Header.Get("Content-Type")
-
 	data, err := io.ReadAll(file)
+	dataURL := fmt.Sprintf("data:%s;base64,%s", mediaType, base64.StdEncoding.EncodeToString(data))
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't read file", err)
-		return
-	}
-	video, err := cfg.db.GetVideo(videoID)
-	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Couldn't get video from database", err)
-		return
-	}
-	if video.UserID != userID {
-		respondWithError(w, http.StatusUnauthorized, "User doesn't own this video", nil)
 		return
 	}
 	thumbnail := thumbnail{
@@ -64,10 +56,12 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		mediaType: mediaType,
 	}
 	videoThumbnails[videoID] = thumbnail
-	url := fmt.Sprintf("%s/api/thumbnails/%s", cfg.port, videoID)
-	// http://localhost:<port>/api/thumbnails/{videoID}
-	fmt.Println("thumbnail uploaded, can be accessed at", url)
-	video.ThumbnailURL = &url
+	video, err := cfg.db.GetVideo(videoID)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't get video from database", err)
+		return
+	}
+	video.ThumbnailURL = &dataURL
 	err = cfg.db.UpdateVideo(video)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't update video with thumbnail URL", err)
