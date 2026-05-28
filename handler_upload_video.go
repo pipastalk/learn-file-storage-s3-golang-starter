@@ -12,7 +12,6 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
-
 	"github.com/google/uuid"
 )
 
@@ -68,7 +67,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusInternalServerError, "Couldn't create temp file", err)
 		return
 	}
-	defer os.Remove(temp.Name())
+	defer os.Remove(temp.Name()) //first in last out
 	defer temp.Close()
 
 	if _, err = io.Copy(temp, file); err != nil {
@@ -79,7 +78,22 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	storageKey := make([]byte, 32)
 	rand.Read(storageKey)
 	r_string := base64.RawURLEncoding.EncodeToString(storageKey)
-
+	aspectRatio, err := getVideoAspectRatio(temp.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't get video aspect ratio", err)
+		return
+	}
+	aspectRatioPrefixes := map[string]string{
+		"16:9": "landscape",
+		"9:16": "portrait",
+	}
+	aspectRatioPrefix := "other"
+	if prefix, ok := aspectRatioPrefixes[aspectRatio]; ok {
+		aspectRatioPrefix = prefix
+	}
+	// https://<bucket-name>.s3.<region>.amazonaws.com/<aspect-ratio-prefix>-<key>
+	r_string = fmt.Sprintf("%s/%s", aspectRatioPrefix, r_string)
+	url := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", cfg.s3Bucket, cfg.s3Region, r_string)
 	_, err = cfg.s3Client.PutObject(context.TODO(), &s3.PutObjectInput{
 		Bucket:      &cfg.s3Bucket,
 		Key:         &r_string,
@@ -90,9 +104,6 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusInternalServerError, "Couldn't upload video to S3", err)
 		return
 	}
-
-	// https://<bucket-name>.s3.<region>.amazonaws.com/<key>
-	url := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", cfg.s3Bucket, cfg.s3Region, r_string)
 
 	video.VideoURL = &url
 	err = cfg.db.UpdateVideo(video)
