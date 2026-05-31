@@ -60,8 +60,8 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusInternalServerError, "Couldn't build S3 URL", err)
 		return
 	}
-	csvURL := fmt.Sprintf("%s,%s", cfg.s3Bucket, key)
-	video.VideoURL = &csvURL
+	url := fmt.Sprintf("%s/%s", cfg.s3CfDistribution, key)
+	video.VideoURL = &url
 	_, err = cfg.s3Client.PutObject(context.TODO(), &s3.PutObjectInput{
 		Bucket:      &cfg.s3Bucket,
 		Key:         &key,
@@ -75,11 +75,6 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	err = cfg.db.UpdateVideo(video)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't update video in database", err)
-		return
-	}
-	video, err = cfg.dbVideoToSignedVideo(video)
-	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Couldn't generate signed URL for video", err)
 		return
 	}
 
