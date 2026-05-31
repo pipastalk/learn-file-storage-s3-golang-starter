@@ -10,7 +10,6 @@ import (
 	"mime"
 	"net/http"
 	"os"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
@@ -56,16 +55,16 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	defer processedFile.Close()
-	r_string, err := buildS3Key(temp)
+	key, err := buildS3Key(temp)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't build S3 URL", err)
 		return
 	}
-	url := fmt.Sprintf("%s,%s", cfg.s3Bucket, r_string)
-
+	csvURL := fmt.Sprintf("%s,%s", cfg.s3Bucket, key)
+	video.VideoURL = &csvURL
 	_, err = cfg.s3Client.PutObject(context.TODO(), &s3.PutObjectInput{
 		Bucket:      &cfg.s3Bucket,
-		Key:         &r_string,
+		Key:         &key,
 		Body:        processedFile,
 		ContentType: &media_type,
 	})
@@ -73,36 +72,24 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusInternalServerError, "Couldn't upload video to S3", err)
 		return
 	}
-
-	video.VideoURL = &url
 	err = cfg.db.UpdateVideo(video)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't update video in database", err)
+		return
+	}
+	video, err = cfg.dbVideoToSignedVideo(video)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't generate signed URL for video", err)
 		return
 	}
 
 	respondWithJSON(w, http.StatusOK, video)
 }
 
-func generatePresignedURL(s3Client *s3.Client, bucket, key string, expireTime time.Duration) (string, error) {
-	//Use the SDK to create a s3.PresignClient with s3.NewPresignClient
-	//Use the client's .PresignGetObject() method with s3.WithPresignExpires as a functional option.
-	//Return the .URL field of the v4.PresignedHTTPRequest created by .PresignGetObject()
-	client := s3.NewPresignClient(s3Client)
-	presignedReq, err := client.PresignGetObject(context.TODO(), &s3.GetObjectInput{
-		Bucket: &bucket,
-		Key:    &key,
-	}, s3.WithPresignExpires(expireTime))
-	if err != nil {
-		return "", err
-	}
-	return presignedReq.URL, nil
-}
-
 func buildS3Key(temp *os.File) (string, error) {
 	storageKey := make([]byte, 32)
 	rand.Read(storageKey)
-	r_string := base64.RawURLEncoding.EncodeToString(storageKey)
+	key := base64.RawURLEncoding.EncodeToString(storageKey)
 	aspectRatio, err := getVideoAspectRatio(temp.Name())
 	if err != nil {
 		message := "Couldn't get video aspect ratio"
@@ -117,8 +104,8 @@ func buildS3Key(temp *os.File) (string, error) {
 		aspectRatioPrefix = prefix
 	}
 	// https://<bucket-name>.s3.<region>.amazonaws.com/<aspect-ratio-prefix>-<key>
-	r_string = fmt.Sprintf("%s/%s", aspectRatioPrefix, r_string)
-	return r_string, nil
+	key = fmt.Sprintf("%s/%s", aspectRatioPrefix, key)
+	return key, nil
 }
 
 func (cfg *apiConfig) prepareVideoUpload(w http.ResponseWriter, r *http.Request) (database.Video, io.ReadCloser, int, string, error) {
