@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -62,19 +63,26 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	temp, err := os.CreateTemp("assets/", "tubely-upload-*.mp4")
+	temp, err := buildTempFileFromUpload(w, file)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Couldn't create temp file", err)
+		respondWithError(w, http.StatusInternalServerError, "Couldn't build temp file from upload", err)
 		return
 	}
 	defer os.Remove(temp.Name()) //first in last out
 	defer temp.Close()
 
-	if _, err = io.Copy(temp, file); err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Couldn't write file", err)
+	processedFilePath, err := processVideoForFastStart(temp.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't process video for fast start", err)
 		return
 	}
-	temp.Seek(0, io.SeekStart)
+	defer os.Remove(processedFilePath)
+	processedFile, err := os.Open(processedFilePath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't open processed video file", err)
+		return
+	}
+	defer processedFile.Close()
 	storageKey := make([]byte, 32)
 	rand.Read(storageKey)
 	r_string := base64.RawURLEncoding.EncodeToString(storageKey)
@@ -97,7 +105,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	_, err = cfg.s3Client.PutObject(context.TODO(), &s3.PutObjectInput{
 		Bucket:      &cfg.s3Bucket,
 		Key:         &r_string,
-		Body:        temp,
+		Body:        processedFile,
 		ContentType: &media_type,
 	})
 	if err != nil {
@@ -114,4 +122,16 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 
 	respondWithJSON(w, http.StatusOK, video)
 
+}
+
+func buildTempFileFromUpload(w http.ResponseWriter, file io.Reader) (*os.File, error) {
+	temp, err := os.CreateTemp("assets/", "tubely-upload-*.mp4")
+	if err != nil {
+		return nil, errors.New("Couldn't create temp file")
+	}
+	if _, err = io.Copy(temp, file); err != nil {
+		return nil, errors.New("Couldn't write file")
+	}
+	temp.Seek(0, io.SeekStart)
+	return temp, nil
 }
